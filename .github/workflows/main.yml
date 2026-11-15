@@ -29,15 +29,18 @@ jobs:
     steps:
       - name: Turn on Remote Desktop and create both users
         shell: powershell
+        env:
+          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+          CLAUDE_PASSWORD: ${{ secrets.CLAUDE_PASSWORD }}
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0
-          net user RDP "${{ secrets.RDP_PASSWORD }}" /add
+          net user RDP "$env:RDP_PASSWORD" /add
           net localgroup administrators RDP /add
           net localgroup "Remote Desktop Users" RDP /add
-          net user CLAUDE "${{ secrets.CLAUDE_PASSWORD }}" /add
+          net user CLAUDE "$env:CLAUDE_PASSWORD" /add
           net localgroup administrators CLAUDE /add
           net localgroup "Remote Desktop Users" CLAUDE /add
 
@@ -65,13 +68,15 @@ jobs:
       - name: Install RustDesk (second way in, phone-friendly)
         shell: powershell
         continue-on-error: true
+        env:
+          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
         run: |
           $rel = Invoke-RestMethod "https://api.github.com/repos/rustdesk/rustdesk/releases/latest"
           $asset = $rel.assets | Where-Object { $_.name -like "*x86_64.exe" -and $_.name -notlike "*install*" } | Select-Object -First 1
           Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$env:TEMP\rustdesk.exe"
           Start-Process "$env:TEMP\rustdesk.exe" -ArgumentList "--install-service" -Wait
           Start-Sleep -Seconds 10
-          & "C:\Program Files\RustDesk\rustdesk.exe" --password "${{ secrets.RDP_PASSWORD }}"
+          & "C:\Program Files\RustDesk\rustdesk.exe" --password "$env:RDP_PASSWORD"
 
       - name: Install Node.js (for the MCP server)
         shell: powershell
@@ -83,6 +88,8 @@ jobs:
       - name: Set up the Roblox Studio MCP server (HTTP over Tailscale)
         shell: powershell
         continue-on-error: true
+        env:
+          MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
         run: |
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
           git clone https://github.com/Meganugger/roblox-studio-mcp.git C:\MCP
@@ -91,16 +98,17 @@ jobs:
           npm run build
           node server/dist/index.js --install-plugin
           # Start script: HTTP transport, reachable on the Tailscale address,
-          # protected by the MCP_TOKEN secret.
-          @"
-          @echo off
-          set ROBLOX_MCP_TRANSPORT=http
-          set ROBLOX_MCP_HTTP_HOST=0.0.0.0
-          set ROBLOX_MCP_HTTP_PORT=3668
-          set ROBLOX_MCP_HTTP_TOKEN=${{ secrets.MCP_TOKEN }}
-          cd /d C:\MCP
-          node server/dist/index.js --transport http >> C:\MCP\mcp.log 2>&1
-          "@ | Out-File -FilePath C:\MCP\start-mcp.cmd -Encoding ascii
+          # protected by the MCP_TOKEN secret. Lines are single-quoted so
+          # PowerShell never re-reads the token value.
+          $lines = @()
+          $lines += '@echo off'
+          $lines += 'set ROBLOX_MCP_TRANSPORT=http'
+          $lines += 'set ROBLOX_MCP_HTTP_HOST=0.0.0.0'
+          $lines += 'set ROBLOX_MCP_HTTP_PORT=3668'
+          $lines += 'set ROBLOX_MCP_HTTP_TOKEN=' + $env:MCP_TOKEN
+          $lines += 'cd /d C:\MCP'
+          $lines += 'node server/dist/index.js --transport http >> C:\MCP\mcp.log 2>&1'
+          $lines | Out-File -FilePath C:\MCP\start-mcp.cmd -Encoding ascii
           New-NetFirewallRule -DisplayName "MCP HTTP" -Direction Inbound -LocalPort 3668 -Protocol TCP -Action Allow | Out-Null
           $action = New-ScheduledTaskAction -Execute "C:\MCP\start-mcp.cmd"
           $trigger = New-ScheduledTaskTrigger -AtLogOn
