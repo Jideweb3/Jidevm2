@@ -1,11 +1,9 @@
 name: Cloud PC v2
 
-# MINIMAL BUILD (2026-11-15): just the PC and the login, nothing else.
-# No Studio, no MCP, no Node, no RustDesk. Those come back after the
-# login is proven. The full version is saved as full-main.yml.bak.
-#
-# Passwords travel through env: only, never pasted into the script,
-# so special characters ($, quotes, backticks) arrive exactly as typed.
+# TEST BUILD (2026-11-15): the PC with a FIXED test password written in
+# the users step — no secrets for passwords at all. It exists to prove
+# the login path end to end. The minimal secret-based build is commit
+# b2eb79f; the full version is saved as full-main.yml.bak.
 
 on:
   workflow_dispatch:
@@ -25,27 +23,29 @@ jobs:
     steps:
       - name: Turn on Remote Desktop and create both users
         shell: powershell
-        env:
-          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
-          CLAUDE_PASSWORD: ${{ secrets.CLAUDE_PASSWORD }}
         run: |
+          # TEST BUILD: one fixed test password, written here on purpose —
+          # no secrets involved, so nothing can be mistyped or chewed on
+          # the way. Both users use it. It only proves the login path;
+          # go back to secret passwords once login works.
+          $testPw = 'TestPC-2026-Login'
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0
-          net user RDP "$env:RDP_PASSWORD" /add
+          net user RDP $testPw /add
           net localgroup administrators RDP /add
           net localgroup "Remote Desktop Users" RDP /add
-          net user CLAUDE "$env:CLAUDE_PASSWORD" /add
+          net user CLAUDE $testPw /add
           net localgroup administrators CLAUDE /add
           net localgroup "Remote Desktop Users" CLAUDE /add
           net accounts /lockoutthreshold:0
           Write-Host "==============================================="
-          Write-Host " USERS CREATED"
-          Write-Host " RDP password length:    $($env:RDP_PASSWORD.Length) characters"
-          Write-Host " CLAUDE password length: $($env:CLAUDE_PASSWORD.Length) characters"
-          Write-Host " Compare with the passwords you saved in GitHub."
-          Write-Host " Same length = the password arrived whole."
+          Write-Host " USERS CREATED (TEST BUILD)"
+          Write-Host " Both users use the test password from this file."
+          Write-Host " Test password length: $($testPw.Length) characters"
+          net user RDP | Select-String "Account active"
+          net user CLAUDE | Select-String "Account active"
           Write-Host "==============================================="
 
       - name: Install Tailscale
@@ -65,7 +65,7 @@ jobs:
           Write-Host " CLOUD PC READY"
           Write-Host " RDP:      jide-cloudpc   (or $ip)"
           Write-Host " Users:    RDP (Jide) / CLAUDE (Muse)"
-          Write-Host " Passwords: the repo secrets you set"
+          Write-Host " Password: the test password in the workflow file"
           Write-Host "==============================================="
 
       - name: Keep alive (about 5h30), then hand over to the next session
