@@ -3,10 +3,11 @@
 A Windows PC that runs for about 5h50 per session on GitHub's machines,
 reachable only through Jide's private Tailscale network.
 
-**Current build: just the PC and the login.** Nothing else installs.
-(Roblox Studio + MCP + RustDesk were designed and may come back later —
-that full draft is kept outside this repo as a backup. This file is the
-simple one that is proven to work.)
+**Current build: the full one.** The PC, both logins, plus everything
+Muse needs to see Roblox Studio: Node.js, the Studio MCP server
+(running over Tailscale on port 3668), and the Studio installer staged
+on the desktop. One piece is deliberately left out: RustDesk — it can
+be added back any time.
 
 ## Start it
 
@@ -27,6 +28,17 @@ simple one that is proven to work.)
 3. RDP to that address:
    - User **RDP** (Jide) or **CLAUDE** (Muse) — both can be in at once
    - Password: the `$testPw` value written in `.github/workflows/main.yml`
+
+## First session with Studio
+
+1. On the PC desktop, open `READ-ME-FIRST.txt`, then double-click
+   `INSTALL-STUDIO.exe` and let Studio install.
+2. Open Studio and sign in as **Jideweb3** — Jide does this himself;
+   Muse never touches the Roblox password.
+3. Open a place → click the **MCP** button in Studio → paste the
+   bridge token from the first lines of `C:\MCP\mcp.log` → **Connect**.
+4. Tell Muse — he connects to the MCP server through Tailscale and
+   we find out if he can see Studio.
 
 ## The password rule (learned the hard way)
 
