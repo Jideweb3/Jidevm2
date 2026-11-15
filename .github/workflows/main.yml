@@ -1,12 +1,18 @@
 name: Cloud PC v2
 
-# STANDING BUILD (2026-11-15, Jide's decision): just the PC and the
-# login. The password is written in the users step on purpose — the
-# secret handoff kept breaking, so it was removed. The PC is reachable
-# only through Jide's private Tailscale network. Any password used
-# here MUST be 14 characters or fewer (net user asks a Y/N question
-# for longer ones, and nobody can answer inside a run).
-# The full Studio/MCP draft is saved as full-main.yml.bak.
+# FULL STANDING BUILD (2026-11-15, Jide's decision): the cloud PC with
+# everything Muse needs to see Roblox Studio.
+# - Two desktop users: RDP (Jide) and CLAUDE (Muse). The password is
+#   written in the users step on purpose — the secret handoff kept
+#   breaking, so it was removed. It MUST stay at 14 characters or
+#   fewer: net user asks a Y/N question for longer passwords and
+#   nobody can answer inside a run, so the users never get created.
+# - Tailscale joins with the one remaining secret (TAILSCALE_AUTHKEY).
+# - Node.js + the roblox-studio-mcp server over HTTP/Tailscale (port
+#   3668, token written in the MCP step — same method as the password)
+#   so Muse can connect to Studio, build and take screenshots.
+# - Roblox Studio installer staged on the Public Desktop.
+# The PC is reachable only through Jide's private Tailscale network.
 
 on:
   workflow_dispatch:
@@ -45,9 +51,9 @@ jobs:
           net localgroup "Remote Desktop Users" CLAUDE /add
           net accounts /lockoutthreshold:0
           Write-Host "==============================================="
-          Write-Host " USERS CREATED (TEST BUILD)"
-          Write-Host " Both users use the test password from this file."
-          Write-Host " Test password length: $($testPw.Length) characters"
+          Write-Host " USERS CREATED"
+          Write-Host " Both users use the password written in this file."
+          Write-Host " Password length: $($testPw.Length) characters"
           net user RDP | Select-String "Account active"
           net user CLAUDE | Select-String "Account active"
           Write-Host "==============================================="
@@ -69,8 +75,71 @@ jobs:
           Write-Host " CLOUD PC READY"
           Write-Host " RDP:      jide-cloudpc   (or $ip)"
           Write-Host " Users:    RDP (Jide) / CLAUDE (Muse)"
-          Write-Host " Password: the test password in the workflow file"
+          Write-Host " Password: the one written in the workflow file"
+          Write-Host " MCP:      http://jide-cloudpc:3668/mcp (via Tailscale)"
           Write-Host "==============================================="
+
+      - name: Install Node.js (for the MCP server)
+        shell: powershell
+        continue-on-error: true
+        run: |
+          choco install nodejs-lts -y --no-progress
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+      - name: Set up the Roblox Studio MCP server (HTTP over Tailscale)
+        shell: powershell
+        continue-on-error: true
+        run: |
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+          # Same method as the password: the token is written here, no
+          # secret handoff. It only guards a server reachable through
+          # Jide's private Tailscale network.
+          $mcpToken = 'Studio-Eyes-2026'
+          git clone https://github.com/Meganugger/roblox-studio-mcp.git C:\MCP
+          cd C:\MCP
+          npm install
+          npm run build
+          node server/dist/index.js --install-plugin
+          # Start script: HTTP transport on all interfaces, token from
+          # the variable above. Lines are single-quoted so PowerShell
+          # never re-reads the token value.
+          $lines = @()
+          $lines += '@echo off'
+          $lines += 'set ROBLOX_MCP_TRANSPORT=http'
+          $lines += 'set ROBLOX_MCP_HTTP_HOST=0.0.0.0'
+          $lines += 'set ROBLOX_MCP_HTTP_PORT=3668'
+          $lines += 'set ROBLOX_MCP_HTTP_TOKEN=' + $mcpToken
+          $lines += 'cd /d C:\MCP'
+          $lines += 'node server/dist/index.js --transport http >> C:\MCP\mcp.log 2>&1'
+          $lines | Out-File -FilePath C:\MCP\start-mcp.cmd -Encoding ascii
+          New-NetFirewallRule -DisplayName "MCP HTTP" -Direction Inbound -LocalPort 3668 -Protocol TCP -Action Allow | Out-Null
+          $action = New-ScheduledTaskAction -Execute "C:\MCP\start-mcp.cmd"
+          $trigger = New-ScheduledTaskTrigger -AtLogOn
+          Register-ScheduledTask -TaskName "MCPServer" -Action $action -Trigger $trigger -RunLevel Highest -Force | Out-Null
+          Start-ScheduledTask -TaskName "MCPServer"
+          Start-Sleep -Seconds 8
+          Write-Host "MCP server starting - log at C:\MCP\mcp.log"
+
+      - name: Stage Roblox Studio (one double-click installs it)
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Invoke-WebRequest -Uri "https://setup.rbxcdn.com/RobloxStudioLauncherBeta.exe" -OutFile "C:\Users\Public\Desktop\INSTALL-STUDIO.exe"
+          @"
+          FIRST STEPS IN THIS PC
+          ======================
+          1. Double-click INSTALL-STUDIO.exe on the desktop, let Studio install.
+          2. Open Studio and sign in as Jideweb3 (Jide does this himself).
+          3. Open a place, click the MCP button in Studio, and paste the
+             bridge token from C:\MCP\mcp.log (first lines of the log),
+             then press Connect.
+          After that, Muse can reach Studio from outside through Tailscale.
+          "@ | Out-File -FilePath "C:\Users\Public\Desktop\READ-ME-FIRST.txt" -Encoding ascii
+          # Also try a head-start install (lands in the runner account if it works;
+          # the desktop installer above is the reliable path).
+          $p = Start-Process "C:\Users\Public\Desktop\INSTALL-STUDIO.exe" -PassThru
+          $p | Wait-Process -Timeout 240 -ErrorAction SilentlyContinue
+          if (-not $p.HasExited) { $p | Stop-Process -Force -ErrorAction SilentlyContinue }
 
       - name: Keep alive (about 5h30), then hand over to the next session
         shell: powershell
