@@ -1,0 +1,159 @@
+name: Cloud PC v2
+
+# A free Windows cloud PC on GitHub Actions, upgraded from Jidevm v1:
+# - Public repo => bigger runner (4 vCPU / 16 GB RAM) and unlimited minutes
+# - windows-latest (Server 2025) instead of windows-2022
+# - Passwords live in repo secrets, never in this file (logs are public)
+# - Fixed Tailscale name "jide-cloudpc" every session
+# - Two desktop users: RDP (Jide) and CLAUDE (Muse), so both can be in at once
+# - Roblox Studio installer staged on the desktop + an MCP server running
+#   over HTTP/Tailscale, so Muse can connect to Studio, build and SEE
+# - Optional auto-relaunch: the run starts its own next run before dying,
+#   so sessions chain back-to-back (input "chain" = how many extra sessions)
+
+on:
+  workflow_dispatch:
+    inputs:
+      chain:
+        description: "Extra sessions to auto-start after this one (0 = just this one)"
+        required: false
+        default: "0"
+
+permissions:
+  actions: write # lets this run start the next one (workflow_dispatch is allowed)
+
+jobs:
+  cloud-pc:
+    runs-on: windows-latest
+    timeout-minutes: 350
+    steps:
+      - name: Turn on Remote Desktop and create both users
+        shell: powershell
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0
+          net user RDP "${{ secrets.RDP_PASSWORD }}" /add
+          net localgroup administrators RDP /add
+          net localgroup "Remote Desktop Users" RDP /add
+          net user CLAUDE "${{ secrets.CLAUDE_PASSWORD }}" /add
+          net localgroup administrators CLAUDE /add
+          net localgroup "Remote Desktop Users" CLAUDE /add
+
+      - name: Install Tailscale
+        shell: powershell
+        run: |
+          $url = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
+          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\tailscale.msi"
+          Start-Process msiexec.exe -ArgumentList "/i", "$env:TEMP\tailscale.msi", "/quiet", "/norestart" -Wait
+
+      - name: Join Tailscale with a fixed name
+        shell: powershell
+        run: |
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey "${{ secrets.TAILSCALE_AUTHKEY }}" --hostname "jide-cloudpc"
+          Start-Sleep -Seconds 5
+          $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+          Write-Host "==============================================="
+          Write-Host " CLOUD PC READY"
+          Write-Host " RDP:      jide-cloudpc   (or $ip)"
+          Write-Host " Users:    RDP (Jide) / CLAUDE (Muse)"
+          Write-Host " Passwords: the repo secrets you set"
+          Write-Host " MCP:      http://jide-cloudpc:3668/mcp"
+          Write-Host "==============================================="
+
+      - name: Install RustDesk (second way in, phone-friendly)
+        shell: powershell
+        continue-on-error: true
+        run: |
+          $rel = Invoke-RestMethod "https://api.github.com/repos/rustdesk/rustdesk/releases/latest"
+          $asset = $rel.assets | Where-Object { $_.name -like "*x86_64.exe" -and $_.name -notlike "*install*" } | Select-Object -First 1
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$env:TEMP\rustdesk.exe"
+          Start-Process "$env:TEMP\rustdesk.exe" -ArgumentList "--install-service" -Wait
+          Start-Sleep -Seconds 10
+          & "C:\Program Files\RustDesk\rustdesk.exe" --password "${{ secrets.RDP_PASSWORD }}"
+
+      - name: Install Node.js (for the MCP server)
+        shell: powershell
+        continue-on-error: true
+        run: |
+          choco install nodejs-lts -y --no-progress
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+      - name: Set up the Roblox Studio MCP server (HTTP over Tailscale)
+        shell: powershell
+        continue-on-error: true
+        run: |
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+          git clone https://github.com/Meganugger/roblox-studio-mcp.git C:\MCP
+          cd C:\MCP
+          npm install
+          npm run build
+          node server/dist/index.js --install-plugin
+          # Start script: HTTP transport, reachable on the Tailscale address,
+          # protected by the MCP_TOKEN secret.
+          @"
+          @echo off
+          set ROBLOX_MCP_TRANSPORT=http
+          set ROBLOX_MCP_HTTP_HOST=0.0.0.0
+          set ROBLOX_MCP_HTTP_PORT=3668
+          set ROBLOX_MCP_HTTP_TOKEN=${{ secrets.MCP_TOKEN }}
+          cd /d C:\MCP
+          node server/dist/index.js --transport http >> C:\MCP\mcp.log 2>&1
+          "@ | Out-File -FilePath C:\MCP\start-mcp.cmd -Encoding ascii
+          New-NetFirewallRule -DisplayName "MCP HTTP" -Direction Inbound -LocalPort 3668 -Protocol TCP -Action Allow | Out-Null
+          $action = New-ScheduledTaskAction -Execute "C:\MCP\start-mcp.cmd"
+          $trigger = New-ScheduledTaskTrigger -AtLogOn
+          Register-ScheduledTask -TaskName "MCPServer" -Action $action -Trigger $trigger -RunLevel Highest -Force | Out-Null
+          Start-ScheduledTask -TaskName "MCPServer"
+          Start-Sleep -Seconds 8
+          Write-Host "MCP server starting - log at C:\MCP\mcp.log"
+
+      - name: Stage Roblox Studio (one double-click installs it)
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Invoke-WebRequest -Uri "https://setup.rbxcdn.com/RobloxStudioLauncherBeta.exe" -OutFile "C:\Users\Public\Desktop\INSTALL-STUDIO.exe"
+          @"
+          FIRST STEPS IN THIS PC
+          ======================
+          1. Double-click INSTALL-STUDIO.exe on the desktop, let Studio install.
+          2. Open Studio and sign in as Jideweb3 (Jide does this himself).
+          3. Open a place, click the MCP button in Studio, and paste the
+             bridge token from C:\MCP\mcp.log (first lines of the log),
+             then press Connect.
+          After that, Muse can reach Studio from outside through Tailscale.
+          "@ | Out-File -FilePath "C:\Users\Public\Desktop\READ-ME-FIRST.txt" -Encoding ascii
+          # Also try a head-start install (lands in the runner account if it works;
+          # the desktop installer above is the reliable path).
+          $p = Start-Process "C:\Users\Public\Desktop\INSTALL-STUDIO.exe" -PassThru
+          $p | Wait-Process -Timeout 240 -ErrorAction SilentlyContinue
+          if (-not $p.HasExited) { $p | Stop-Process -Force -ErrorAction SilentlyContinue }
+
+      - name: Keep alive (about 5h30), then hand over to the next session
+        shell: powershell
+        run: |
+          for ($i = 1; $i -le 66; $i++) {
+            Write-Host "RDP Active - block $i of 66"
+            Start-Sleep -Seconds 300
+          }
+
+      - name: Start the next session (if chain is left)
+        if: ${{ inputs.chain != '0' }}
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $left = [int]"${{ inputs.chain }}" - 1
+          $body = @{ ref = "${{ github.ref_name }}"; inputs = @{ chain = "$left" } } | ConvertTo-Json
+          $uri = "https://api.github.com/repos/${{ github.repository }}/actions/workflows/main.yml/dispatches"
+          Invoke-RestMethod -Method Post -Uri $uri -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" } -Body $body -ContentType "application/json"
+          Write-Host "Next session started. Sessions left after it: $left"
+
+      - name: Final stretch until the job timer ends this session
+        shell: powershell
+        run: |
+          while ($true) {
+            Write-Host "RDP Active - final stretch"
+            Start-Sleep -Seconds 300
+          }
