@@ -1,9 +1,12 @@
 name: Cloud PC v2
 
-# TEST BUILD (2026-11-15): the PC with a FIXED test password written in
-# the users step — no secrets for passwords at all. It exists to prove
-# the login path end to end. The minimal secret-based build is commit
-# b2eb79f; the full version is saved as full-main.yml.bak.
+# STANDING BUILD (2026-11-15, Jide's decision): just the PC and the
+# login. The password is written in the users step on purpose — the
+# secret handoff kept breaking, so it was removed. The PC is reachable
+# only through Jide's private Tailscale network. Any password used
+# here MUST be 14 characters or fewer (net user asks a Y/N question
+# for longer ones, and nobody can answer inside a run).
+# The full Studio/MCP draft is saved as full-main.yml.bak.
 
 on:
   workflow_dispatch:
@@ -24,10 +27,11 @@ jobs:
       - name: Turn on Remote Desktop and create both users
         shell: powershell
         run: |
-          # TEST BUILD: one fixed test password, written here on purpose —
-          # no secrets involved, so nothing can be mistyped or chewed on
-          # the way. Both users use it. It only proves the login path;
-          # go back to secret passwords once login works.
+          # The password lives here on purpose (Jide's decision,
+          # 2026-11-15): the secret handoff kept breaking, so it was
+          # removed. Both users use this one password. MUST stay at
+          # 14 characters or fewer — net user asks a Y/N question for
+          # longer passwords and nobody can answer inside a run.
           $testPw = 'TestPC-2026x'
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
