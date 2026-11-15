@@ -1,64 +1,64 @@
-# Jidevm v2 — free Windows cloud PC on GitHub (upgraded)
+# Jidevm2 — free Windows cloud PC on GitHub
 
-Same idea as Jidevm v1, with the weak points fixed — and one big addition:
-the PC is set up so **Muse can work in it too** (own desktop login, plus a
-Roblox Studio MCP server Muse can connect to and *see* through).
+A Windows PC that runs for about 5h50 per session on GitHub's machines,
+reachable only through Jide's private Tailscale network.
 
-| | v1 (old) | v2 (this) |
-|---|---|---|
-| Repo | Private | **Public** — bigger machine, no monthly minute cap |
-| Machine | 2 cores / 8 GB RAM | **4 cores / 16 GB RAM** |
-| Windows | Server 2022 | **Server 2025** (windows-latest) |
-| Password | Written in plain text in the file | **In repo secrets** — the file and logs stay clean |
-| Finding the PC | New Tailscale name every run | **Always `jide-cloudpc`** |
-| Session end | PC dies at 5h50, that's it | **Auto-relaunch**: type how many extra sessions and it starts the next one before dying |
-| Ways in | RDP only, one user | RDP **+ RustDesk**, **two users** (RDP for Jide, CLAUDE for Muse — both can be connected at once) |
-| Stranger's script | Downloads a .bat from someone's GitLab | **Gone** |
-| Roblox Studio | — | Installer staged on the desktop; **MCP server** runs over Tailscale so Muse can build in Studio and take screenshots of the game view |
+**Current build: just the PC and the login.** Nothing else installs.
+(Roblox Studio + MCP + RustDesk were designed and may come back later —
+that full draft is kept outside this repo as a backup. This file is the
+simple one that is proven to work.)
 
-## Setup (10 minutes, once)
+## Start it
 
-1. Create a **public** GitHub repo (e.g. `Jidevm2`) and put this file at
-   `.github/workflows/main.yml`.
-2. In Tailscale: Settings → Keys → generate an auth key with **Reusable** ticked
-   (a one-time key breaks the auto-relaunch chain — session 2 could not join).
-3. In the repo: Settings → Secrets and variables → Actions → add four secrets:
-   - `TAILSCALE_AUTHKEY` — the reusable key from step 2
-   - `RDP_PASSWORD` — password for Jide's `RDP` user (and the RustDesk password)
-   - `CLAUDE_PASSWORD` — a password for Muse's own `CLAUDE` desktop user
-   - `MCP_TOKEN` — a long random string you invent; it protects the MCP server
-4. Muse joins the Tailscale network too: he shows a join link, Jide approves
-   the device named `muse` once.
-5. Actions tab → **Cloud PC v2** → Run workflow.
-   - `chain = 0` → one session of ~5h50
-   - `chain = 3` → about 24 hours back-to-back, etc.
+1. Actions tab → **Cloud PC v2** → **Run workflow**
+   - `chain = 0` → one session (~5h50)
+   - `chain = 2` → this session plus 2 more, back to back
+2. **Always start a FRESH run.** The "Re-run" button replays the exact
+   file from the old run — if the file has changed since, re-run uses
+   the OLD one. That mistake cost us a night.
 
-## First session checklist
+## Connect
 
-1. Jide connects by RDP to `jide-cloudpc` (user `RDP`).
-2. On the desktop: open `READ-ME-FIRST.txt`, double-click `INSTALL-STUDIO.exe`.
-3. Open Studio, sign in as **Jideweb3** (Jide does this himself — Muse never
-   touches the Roblox password).
-4. Open a place → click the **MCP** button in Studio → paste the bridge token
-   from the first lines of `C:\MCP\mcp.log` → **Connect**.
-5. Tell Muse. He connects to the MCP server through Tailscale
-   (`http://jide-cloudpc:3668/mcp`, token = `MCP_TOKEN`) and to his own
-   `CLAUDE` desktop, and we find out if he can see. 🤞
+1. Wait ~3 minutes after starting the run.
+2. Open Tailscale and find the newest `jide-cloudpc` machine (old dead
+   ones linger for a while with names like `jide-cloudpc-1`, `-2`... —
+   the newest, highest number is the live one). Or read the exact
+   address in the run's "CLOUD PC READY" banner.
+3. RDP to that address:
+   - User **RDP** (Jide) or **CLAUDE** (Muse) — both can be in at once
+   - Password: the `$testPw` value written in `.github/workflows/main.yml`
 
-## Connecting (after setup)
+## The password rule (learned the hard way)
 
-- **Jide**: RDP or RustDesk to `jide-cloudpc`, user `RDP`.
-- **Muse**: his own RDP session as user `CLAUDE`, plus the Studio MCP.
+The password lives **in the workflow file on purpose** — secrets kept
+getting mangled or mistyped on the way in, so we removed the handoff.
+The PC can only be reached through the private Tailscale network,
+which is the real wall.
+
+**Any password put in the file must be 14 characters or fewer.**
+The Windows command that creates the users stops and asks
+"password is longer than 14 characters, continue? (Y/N)" — and inside
+a GitHub run nobody can answer, so the users silently never get
+created and every login fails. Short and mixed beats long here.
+
+To change the password: edit the `$testPw` line, keep it ≤14 chars
+with capitals, small letters and a number or symbol, and start a
+fresh run.
+
+## The one remaining secret
+
+`TAILSCALE_AUTHKEY` (repo Settings → Secrets) — how the PC joins the
+network. Reusable + Ephemeral, generated in Tailscale → Settings →
+Keys. If a run fails at "Join Tailscale" with "invalid key", the key
+was deleted or replaced — generate a fresh one and update the secret.
 
 ## Honest notes
 
-- Each machine is fresh — files do **not** carry over between sessions.
-  Copy out anything you need before a session ends. Studio sign-in and the
-  MCP token paste are once per session.
-- GitHub's rules say Actions is for building and testing software; using it as
-  a remote PC is outside that. Jobs can be killed, and heavy abuse can get a
-  repo or account limited. Keep it modest — no mining, no mass runs.
-- Public repo = public logs. Nothing secret is printed by this workflow
-  (no passwords, no keys) — keep it that way if you edit it.
-- Studio has no graphics card in there; expect a slowish viewport. Fine for
-  building and checking, not for judging fine graphics.
+- Each machine is fresh — files do **not** carry over between
+  sessions. Copy out anything you need before a session ends.
+- GitHub's rules say Actions is for building and testing software;
+  using it as a remote PC is outside that. Jobs can be killed and
+  heavy abuse can get a repo or account limited. Keep it modest.
+- The repo is public, so the password in the file is public too.
+  That is accepted for this throwaway PC because Tailscale is the
+  door — never reuse this password anywhere else.
